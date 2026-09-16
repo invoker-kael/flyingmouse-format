@@ -1,4 +1,4 @@
-name: ChatGPT Build Windows x64
+name: Custom Build Windows x64
 
 on:
   push:
@@ -9,7 +9,8 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
+  actions: write
 
 jobs:
   build:
@@ -18,6 +19,15 @@ jobs:
     timeout-minutes: 180
 
     steps:
+      - name: Clean old build branch and stale runs
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X POST "repos/${{ github.repository }}/actions/runs/35060449273/cancel" >/dev/null 2>&1 || true
+          gh api -X POST "repos/${{ github.repository }}/actions/runs/35060589783/cancel" >/dev/null 2>&1 || true
+          gh api -X DELETE "repos/${{ github.repository }}/git/refs/heads/chatgpt-build-0.7.3" >/dev/null 2>&1 || true
+
       - name: Checkout
         uses: actions/checkout@v4
 
