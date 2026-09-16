@@ -3,7 +3,7 @@ name: ChatGPT Build Windows x64
 on:
   push:
     branches:
-      - chatgpt-build-0.7.3
+      - custom
     paths:
       - ".github/workflows/chatgpt-build.yml"
   workflow_dispatch:
