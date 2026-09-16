@@ -1,0 +1,102 @@
+name: ChatGPT Build Windows x64
+
+on:
+  push:
+    branches:
+      - chatgpt-build-0.7.3
+    paths:
+      - ".github/workflows/chatgpt-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Windows 10/11 x64 Full
+    runs-on: windows-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Restore locked Markdown engine
+        run: npm run restore:pandoc
+
+      - name: Restore fixed conversion engines
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .\scripts\restore-ci-engines.ps1
+
+      - name: Validate document structure engine
+        shell: powershell
+        run: node scripts/lock-docstructure-engine.js --verify --root bin/docstructure --lock docstructure-engine-lock.json
+
+      - name: Stage Thai OCR data
+        shell: powershell
+        run: |
+          $source = 'node_modules\@tesseract.js-data\tha\4.0.0_best_int\tha.traineddata.gz'
+          $destination = 'bin\tessdata\tha.traineddata.gz'
+          if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+            throw 'Locked Thai OCR data is missing.'
+          }
+          Copy-Item -LiteralPath $source -Destination $destination -Force
+          $sourceHash = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash
+          $destinationHash = (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash
+          if ($sourceHash -ne $destinationHash) {
+            throw 'Thai OCR data copy failed hash validation.'
+          }
+
+      - name: Syntax checks
+        run: |
+          node --check server.js
+          node --check electron-main.js
+          node --check electron-security.js
+          node --check preload.js
+          node --check public/app.js
+
+      - name: Run full test suite
+        run: npm test
+
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Build Windows 10/11 x64 installer
+        run: npm run dist
+
+      - name: Inspect installer and calculate SHA256
+        shell: powershell
+        run: |
+          $installer = Get-ChildItem -LiteralPath dist -Filter '*Setup-*-x64.exe' |
+            Where-Object { $_.Name -notmatch 'win7|Lite' } |
+            Select-Object -First 1
+          if (-not $installer) {
+            throw 'Windows x64 installer was not produced.'
+          }
+          node scripts/inspect-pe.js $installer.FullName
+          $hash = (Get-FileHash -LiteralPath $installer.FullName -Algorithm SHA256).Hash
+          Write-Host "INSTALLER=$($installer.Name)"
+          Write-Host "SHA256=$hash"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: flyingmouse-format-0.7.3-windows-x64
+          path: |
+            dist/*Setup-*-x64.exe
+            dist/latest.yml
+            dist/*.blockmap
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
