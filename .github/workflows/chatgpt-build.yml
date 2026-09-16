@@ -1,4 +1,4 @@
-name: Custom Build Windows x64
+name: Custom Release v0.7.3
 
 on:
   push:
@@ -26,6 +26,7 @@ jobs:
         run: |
           gh api -X POST "repos/${{ github.repository }}/actions/runs/35060449273/cancel" >/dev/null 2>&1 || true
           gh api -X POST "repos/${{ github.repository }}/actions/runs/35060589783/cancel" >/dev/null 2>&1 || true
+          gh api -X POST "repos/${{ github.repository }}/actions/runs/35060656192/cancel" >/dev/null 2>&1 || true
           gh api -X DELETE "repos/${{ github.repository }}/git/refs/heads/chatgpt-build-0.7.3" >/dev/null 2>&1 || true
 
       - name: Checkout
@@ -110,3 +111,47 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 7
+
+      - name: Publish GitHub Release v0.7.3
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          TAG="v0.7.3"
+          NOTES="docs/release-notes-073.md"
+
+          git fetch --tags --force
+
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
+            if [ "$TAG_COMMIT" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag $TAG already exists at $TAG_COMMIT, expected $GITHUB_SHA. Refusing to move an existing tag."
+              exit 1
+            fi
+          fi
+
+          mkdir -p release-assets
+          cp dist/*Setup-*-x64.exe release-assets/
+          cp dist/*.blockmap release-assets/ 2>/dev/null || true
+          cp dist/latest.yml release-assets/ 2>/dev/null || true
+
+          cd release-assets
+          for f in *; do
+            [ -e "$f" ] || continue
+            n="$(basename "$f" | tr ' ' '-')"
+            [ "$(basename "$f")" = "$n" ] || mv "$f" "$n"
+          done
+          cd ..
+
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "::error::Release $TAG already exists. Refusing to overwrite an existing release."
+            exit 1
+          fi
+
+          gh release create "$TAG"             --repo "${{ github.repository }}"             --target "$GITHUB_SHA"             --title "FlyingMouse Format $TAG"             --notes-file "$NOTES"             --draft
+
+          gh release upload "$TAG" release-assets/*             --repo "${{ github.repository }}"
+
+          gh release edit "$TAG"             --repo "${{ github.repository }}"             --draft=false             --latest
